@@ -1,23 +1,56 @@
-# Maven
-# Build your Java project and run tests with Apache Maven.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/java
-
 trigger:
-- gh-pages
+- main  # Change to your branch if different
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
-- task: Maven@4
+variables:
+  warFile: 'target/*.war'  # Adjust if your .war file has a specific name
+  remotePath: '/opt/tomcat/webapp/'
+
+steps:
+
+# Step 1: Build Java project with Maven
+- task: Maven@3
   inputs:
     mavenPomFile: 'pom.xml'
-    goals: 'test'
-    publishJUnitResults: true
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    javaHomeOption: 'JDKVersion'
-    mavenVersionOption: 'Default'
-    mavenAuthenticateFeed: false
-    effectivePomSkip: false
-    sonarQubeRunAnalysis: false
+    goals: 'clean package'
+    options: '-DskipTests'
 
+# Step 2: Copy the WAR file to the staging directory
+- task: CopyFiles@2
+  inputs:
+    contents: '$(warFile)'
+    targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+# Step 3: SSH into the VM and clean old WARs and stop Tomcat
+- task: SSH@0
+  inputs:
+    sshEndpoint: 'Build-Deploy-VM'
+    runOptions: 'commands'
+    commands: |
+      echo "Stopping Tomcat..."
+      sudo systemctl stop tomcat
+      echo "Removing old WARs..."
+      sudo rm -f /opt/tomcat/webapp/*.war
+    readyTimeout: '20000'
+
+# Step 4: Upload WAR file via SCP
+- task: SSH@0
+  inputs:
+    sshEndpoint: 'Build-Deploy-VM'
+    runOptions: 'inline'
+    inline: |
+      echo "Uploading WAR file..."
+      scp $(Build.ArtifactStagingDirectory)/*.war $(USER)@$(HOST):/opt/tomcat/webapp/
+    readyTimeout: '20000'
+
+# Step 5: Start Tomcat again
+- task: SSH@0
+  inputs:
+    sshEndpoint: 'Build-Deploy-VM'
+    runOptions: 'commands'
+    commands: |
+      echo "Starting Tomcat..."
+      sudo systemctl start tomcat
+    readyTimeout: '20000'
